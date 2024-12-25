@@ -1,8 +1,7 @@
-import calendar
 import click
-import yfinance as yf
-from typing import List
-from datetime import date as dt
+from datetime import datetime
+from typing import Optional
+from src.utils.mktcli_utils import *
 
 
 @click.group()
@@ -12,40 +11,42 @@ def mktcli():
 
 @mktcli.command(name='price')
 @click.argument('labels', nargs=-1)
-@click.option('-v',
-              '--verbose',
-              type=bool,
-              required=False,
-              default=False,
-              help="Verbose data return, if True -> Ticker, Date, Open price, Current price")
-@click.option('-d',
-              '--date',
-              type=str,
-              default=dt.today().strftime('%Y-%m-%d'),
-              required=False)
-def get_stock_price(labels: List[str],
-                    verbose: bool,
-                    date: str):
-    if (day_number := check_business_date(date)) > 5:
-        click.echo(f'Date {date} is not valid, day is number {day_number}th of the week. '
-                   f'\nSaturdays and Sundays not allowed')
+@click.option('-d', '--date', type=str, default=datetime.now().strftime('%Y-%m-%d'), required=False)
+@click.option('-c', '--currency', type=str, default=None, required=False)
+def get_stock_price(labels: List[str], currency: Optional[str], date: str):
+    """
+    Retrieves and displays stock prices for the specified labels on a given date.
+
+    This command-line function fetches the closing prices of specified stock tickers on a provided date,
+    optionally converting them into a specified currency. If the given date falls on non-business day, the function
+    exits with an error message.
+
+    Args:
+        labels (List[str]): One or more stock ticker symbols to retrieve prices for.
+        currency (Optional[str]): A three-letter ISO currency code (e.g., 'EUR', 'GBP') for currency conversion.
+                                  If not specified, prices remain in the original currency (USD).
+        date (str): The date for which to retrieve stock prices, in 'YYYY-MM-DD' format. Defaults to the
+                    current date.
+
+    Returns:
+        None: Outputs the DataFrame directly to the console.
+
+    Example:
+        mktcli price AAPL META -d 2024-12-23 -c EUR
+    """
+    if not check_business_date(date):
+        click.echo(f'Date {date} is not valid business day, try again.')
         return
 
-    stocks = {ticker: yf.Ticker(ticker).history() for ticker in labels}
-    stocks = {ticker: stock.loc[lambda x: x.index == date] for ticker, stock in stocks.items()}
+    stocks = get_latest_stocks_prices(labels=labels, date=date)
 
-    if verbose:
-        for label, stock in stocks.items():
-            click.echo(f"Ticker: {label} "
-                       f"\nDate: {stock.index[-1].date().strftime('%A, %d %b %Y')}"
-                       f"\nOpen price: {float(stock.Open.iloc[-1])} "
-                       f"\nCurrent price: {float(stock.Close.iloc[-1])}")
+    if currency:
+        try:
+            rate = get_rate(currency=currency)
+            stocks = {k: [v[0] * rate] for k, v in stocks.items()}
+        except IndexError:
+            click.echo('Currency non available for currency conversion, try again with different')
+            return
 
-        return
-
-    for stock in stocks.values():
-        click.echo(f"Current price: {float(stock.Close.iloc[-1])}")
-
-
-def check_business_date(date: str):
-    return calendar.weekday(*[int(x) for x in date.split('-')])
+    df = construct_dataframe(stocks, date=date)
+    click.echo(df)
